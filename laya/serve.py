@@ -15,7 +15,7 @@ serves a laptop dev run and a systemd unit:
 env var                 meaning                                        default
 ======================  ============================================  =========
 ``LAYA_HOST``           bind address                                   0.0.0.0
-``LAYA_PORT``           bind port                                      8000
+``LAYA_PORT``           bind port                                      18899
 ``LAYA_DEVICE``         torch device for every checkpoint              (auto)
 ``LAYA_PRELOAD``        build the checkpoints at startup, not lazily   1
 ``LAYA_MODELS``         comma list to preload (english,multilingual,   (all)
@@ -33,6 +33,7 @@ deferred into the functions that need them, so ``import laya.serve`` stays cheap
 and touches no GPU -- which is what keeps the Nix ``pythonImportsCheck`` honest.
 """
 import os
+import time
 from typing import Any, Dict, Optional
 
 # The three checkpoint names the router understands; used to decide whether a
@@ -164,13 +165,43 @@ def create_app(router: Optional[Any] = None):
         model = _resolve_model(body.get("model"))
         if gate is None:
             gate = asyncio.Lock()
+        t0 = time.perf_counter()
         try:
             # Laya's result is already Jev-shaped: {model, answers, usage, routing}.
             # hs-jev decodes `answers` and `usage` and ignores the rest.
             async with gate:
                 loop = asyncio.get_running_loop()
-                return await loop.run_in_executor(
+                result = await loop.run_in_executor(
                     pool, lambda: router.predict(state, questions, model=model))
+
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            routed = result.get("routing", {}).get("model", "auto")
+            repo_path = result.get("routing", {}).get("repo", "")
+            state_text = str(state)
+            if len(state_text) > 80:
+                state_text = state_text[:77] + "..."
+
+            print(f"\n┌────────────────── ⚡ LAYA 决策日志 ({elapsed_ms:.1f}ms) ──────────────────", flush=True)
+            print(f"│ 📂 路由模型: {routed} (本地路径: {repo_path})", flush=True)
+            print(f"│ 📝 输入内容: {state_text!r}", flush=True)
+            print(f"│ 🎯 决策明细:", flush=True)
+            for qid, ans in result.get("answers", {}).items():
+                atype = ans.get("type")
+                if atype == "choice":
+                    chosen = ans.get("choice")
+                    conf = ans.get("confidence", 0.0) * 100
+                    probs = ans.get("probabilities", {})
+                    top_probs = ", ".join(f"{k}:{v*100:.1f}%" for k, v in list(probs.items())[:3])
+                    print(f"│    • [{qid}] (多选一): 选中【{chosen}】| 置信度: {conf:.1f}% ({top_probs})", flush=True)
+                elif atype == "noul":
+                    prob = ans.get("noul", 0.0) * 100
+                    verdict = "【是 / 命中】" if prob >= 50 else "【否 / 未命中】"
+                    print(f"│    • [{qid}] (布尔判断): {verdict} 概率: {prob:.2f}%", flush=True)
+                elif atype == "score":
+                    score = ans.get("score", 0.0)
+                    print(f"│    • [{qid}] (程度打分): 评估得分: {score:.2f}", flush=True)
+            print(f"└─────────────────────────────────────────────────────────────\n", flush=True)
+            return result
         except HTTPException:
             raise
         except Exception as e:  # noqa: BLE001 -- surface model/tokenizer errors as 422
@@ -185,7 +216,7 @@ def main() -> None:
     uvicorn.run(
         create_app(),
         host=os.environ.get("LAYA_HOST", "0.0.0.0"),
-        port=int(os.environ.get("LAYA_PORT", "8000")),
+        port=int(os.environ.get("LAYA_PORT", "18899")),
         log_level=os.environ.get("LAYA_LOG_LEVEL", "info"),
     )
 

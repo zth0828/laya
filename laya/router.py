@@ -190,6 +190,20 @@ class Router:
         self.models = dict(STANDALONE_MODELS if standalone_repos else DEFAULT_MODELS)
         if models:
             self.models.update({normalise_name(k): v for k, v in models.items()})
+
+        # Check for local models directory override or default ./models
+        models_dir = os.environ.get("LAYA_MODELS_DIR")
+        if not models_dir:
+            for candidate in ("./models", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models")):
+                if os.path.isdir(candidate):
+                    models_dir = candidate
+                    break
+        if models_dir:
+            for k in ("english", "multilingual", "typed-decisions"):
+                candidate_dir = os.path.join(models_dir, k)
+                if os.path.isdir(candidate_dir) and os.path.exists(os.path.join(candidate_dir, "model.safetensors")):
+                    self.models[k] = (candidate_dir, None)
+
         self.device = device
         self.token = token or os.environ.get("HF_TOKEN")
         self.max_loaded = max(1, int(max_loaded))
