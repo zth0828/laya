@@ -1,7 +1,6 @@
 # Use with compose.yaml, and with compose.http.yaml when serving over HTTP. The
-# `laya-serve` override repeats the CUDA build args and device reservation, because a
-# Compose override replaces a service's `build` block whole rather than merging it, so
-# adding this file without repeating them would silently serve on CPU.
+# `laya-serve` entry repeats the CUDA build args and device reservation because it is
+# a separate service: overrides for `laya` never reach it, so it would serve on CPU.
 services:
   laya:
     build:
@@ -9,6 +8,10 @@ services:
         TORCH_INDEX: "${LAYA_TORCH_INDEX:-cu128}"
     environment:
       LAYA_DEVICE: "${LAYA_DEVICE:-cuda}"
+      # The runtime reads these when it picks the autocast dtype; empty keeps the checkpoint's
+      # own `amp_dtype`. README's threshold section measures what fp16 vs bf16 decides differently.
+      LAYA_CUDA_AMP: "${LAYA_CUDA_AMP:-}"
+      LAYA_CPU_AMP: "${LAYA_CPU_AMP:-}"
     deploy:
       resources:
         reservations:
@@ -24,6 +27,10 @@ services:
         TORCH_INDEX: "${LAYA_TORCH_INDEX:-cu128}"
     environment:
       LAYA_DEVICE: "${LAYA_DEVICE:-cuda}"
+      # The runtime reads these when it picks the autocast dtype; empty keeps the checkpoint's
+      # own `amp_dtype`. README's threshold section measures what fp16 vs bf16 decides differently.
+      LAYA_CUDA_AMP: "${LAYA_CUDA_AMP:-}"
+      LAYA_CPU_AMP: "${LAYA_CPU_AMP:-}"
     deploy:
       resources:
         reservations:
